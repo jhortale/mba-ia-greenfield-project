@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** in_progress
-**SIs:** 9/10 completed
+**Status:** completed
+**SIs:** 10/10 completed
 
 ### SI-03.1 — Dependencies, Configuration Namespaces, and Compose Infrastructure (MinIO + Redis)
 - **Status:** completed
@@ -49,6 +49,6 @@
 - **Observations:** With the live video-worker consuming the queue, integration/producer specs could no longer assert jobs in 'waiting' — assertions now search jobs across all states filtered by videoId (raciness caused by real infra, not a bug).
 
 ### SI-03.10 — Phase Closure: Full Suite, OpenAPI Sync, and Documentation
-- **Status:** pending
-- **Tests:** —
-- **Observations:** —
+- **Status:** completed
+- **Tests:** Definition of Done: 205 unit/integration passing + 2 ffmpeg tests passing in the video-worker container (skipped in nestjs-api by design); 66 e2e passing; `npx tsc --noEmit` exit 0; `npm run lint` exit 0; `npm run build` exit 0 — all in-container
+- **Observations:** Two cross-suite issues surfaced by the full run: (1) `test/jest-e2e.json` had no `maxWorkers` — with two DB-destructive e2e suites (auth + videos) running in parallel they truncated each other's tables; pinned `maxWorkers: 1`. (2) The migrations spec dropped FK-linked tables with `Promise.all` — parallel `DROP TABLE CASCADE` deadlocks now that `videos` joined the graph; drops made sequential in reverse dependency order. `CLAUDE.md` (root + nestjs-project) and `docs/diagrams/software-arch.mermaid` updated (queue no longer TBD); `openapi.json` re-exported and synced to `next-frontend/`.

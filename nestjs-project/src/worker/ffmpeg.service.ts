@@ -55,9 +55,7 @@ export class FfmpegService {
     );
 
     const parsed = JSON.parse(stdout) as FfprobeOutput;
-    const videoStream = parsed.streams?.find(
-      (s) => s.codec_type === 'video',
-    );
+    const videoStream = parsed.streams?.find((s) => s.codec_type === 'video');
     const duration = Number(parsed.format?.duration ?? 0);
 
     return {

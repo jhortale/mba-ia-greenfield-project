@@ -252,8 +252,9 @@ describe('Videos (e2e)', () => {
     it('returns 403 for a non-owner', async () => {
       const { accessToken } = await registerAndLogin('owner2@example.com');
       const created = await initiate(accessToken).expect(201);
-      const { accessToken: intruderToken } =
-        await registerAndLogin('intruder@example.com');
+      const { accessToken: intruderToken } = await registerAndLogin(
+        'intruder@example.com',
+      );
 
       const response = await request(app.getHttpServer())
         .post(`/videos/${created.body.video.id}/upload/part-urls`)

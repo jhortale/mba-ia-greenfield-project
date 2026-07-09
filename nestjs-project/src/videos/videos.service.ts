@@ -157,9 +157,7 @@ export class VideosService {
       throw new UploadNotInProgressException();
     }
 
-    const parts = dto.parts
-      .slice()
-      .sort((a, b) => a.partNumber - b.partNumber);
+    const parts = dto.parts.slice().sort((a, b) => a.partNumber - b.partNumber);
     try {
       await this.storageService.completeMultipartUpload(
         video.storage_key,

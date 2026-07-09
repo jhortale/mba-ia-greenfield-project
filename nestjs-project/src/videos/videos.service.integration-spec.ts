@@ -44,9 +44,7 @@ describe('VideosService (integration)', () => {
           isGlobal: true,
           load: [storageConfig, queueConfig],
         }),
-        TypeOrmModule.forRoot(
-          createTestDataSource(ALL_ENTITIES).options,
-        ),
+        TypeOrmModule.forRoot(createTestDataSource(ALL_ENTITIES).options),
         VideosModule,
       ],
     }).compile();

@@ -69,7 +69,11 @@ export class VideosController {
     @Body() dto: InitiateUploadDto,
   ): Promise<{
     video: VideoSummary;
-    upload: { partSizeBytes: number; partCount: number; parts: PresignedPart[] };
+    upload: {
+      partSizeBytes: number;
+      partCount: number;
+      parts: PresignedPart[];
+    };
   }> {
     const result = await this.videosService.initiateUpload(user.sub, dto);
     return { video: toVideoSummary(result.video), upload: result.upload };
@@ -120,7 +124,10 @@ export class VideosController {
     description:
       'Completes the multipart upload in storage, verifies the stored object, flips the video to processing and enqueues the processing job.',
   })
-  @ApiResponse({ status: 200, description: 'Upload completed, processing enqueued' })
+  @ApiResponse({
+    status: 200,
+    description: 'Upload completed, processing enqueued',
+  })
   @ApiResponse({
     status: 400,
     description: 'Upload incomplete or size mismatch',

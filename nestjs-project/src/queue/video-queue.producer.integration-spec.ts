@@ -4,10 +4,7 @@ import { getQueueToken } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import queueConfig from '../config/queue.config';
 import { QueueModule } from './queue.module';
-import {
-  PROCESS_VIDEO_JOB,
-  VIDEO_PROCESSING_QUEUE,
-} from './queue.constants';
+import { PROCESS_VIDEO_JOB, VIDEO_PROCESSING_QUEUE } from './queue.constants';
 import { VideoQueueProducer } from './video-queue.producer';
 
 // Runs against the real Redis service from Docker Compose (no queue mocks).

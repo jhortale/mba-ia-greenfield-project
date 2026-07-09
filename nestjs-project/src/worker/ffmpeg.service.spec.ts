@@ -116,7 +116,14 @@ describe('FfmpegService', () => {
       const [cmd, args] = execFileMock.mock.calls[0];
       expect(cmd).toBe('ffmpeg');
       expect(args).toEqual(
-        expect.arrayContaining(['-ss', '1', '-i', 'http://src', '-frames:v', '1']),
+        expect.arrayContaining([
+          '-ss',
+          '1',
+          '-i',
+          'http://src',
+          '-frames:v',
+          '1',
+        ]),
       );
       expect(Buffer.isBuffer(frame)).toBe(true);
       expect(frame.length).toBe(3);

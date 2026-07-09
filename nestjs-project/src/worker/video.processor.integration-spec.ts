@@ -44,7 +44,6 @@ function hasFfmpeg(): boolean {
 
 const describeWithFfmpeg = hasFfmpeg() ? describe : describe.skip;
 if (!hasFfmpeg()) {
-  // eslint-disable-next-line no-console
   console.warn(
     'VideoProcessor (integration) SKIPPED — ffmpeg not available in this container. Run it via: docker compose exec video-worker npm test -- --runInBand src/worker/video.processor.integration-spec.ts',
   );

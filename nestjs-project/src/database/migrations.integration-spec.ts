@@ -35,12 +35,12 @@ describe('Database migrations (integration)', () => {
 
     await dataSource.initialize();
 
-    await Promise.all([
-      ...MANAGED_TABLES.map((table) =>
-        dataSource.query(`DROP TABLE IF EXISTS "${table}" CASCADE`),
-      ),
-      dataSource.query(`DROP TABLE IF EXISTS "migrations" CASCADE`),
-    ]);
+    // Sequential drops in reverse dependency order — parallel DROP CASCADE
+    // over FK-linked tables deadlocks (each drop cascades into the others).
+    for (const table of [...MANAGED_TABLES].reverse()) {
+      await dataSource.query(`DROP TABLE IF EXISTS "${table}" CASCADE`);
+    }
+    await dataSource.query(`DROP TABLE IF EXISTS "migrations" CASCADE`);
 
     // Dropping tables does not drop enum types created by migrations; a
     // pre-migrated DB (migration:run before the suite) would break re-running

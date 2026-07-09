@@ -10,30 +10,30 @@ function makeVideo(overrides: Partial<Video> = {}): Video {
   return Object.assign(video, overrides);
 }
 
-function makeDeps(overrides: {
-  repo?: any;
-  storage?: any;
-  ffmpeg?: any;
-}) {
+function makeDeps(overrides: { repo?: any; storage?: any; ffmpeg?: any }) {
   const repo = overrides.repo ?? {
-    findOneBy: jest.fn(async () => makeVideo()),
-    save: jest.fn(async (v: any) => v),
-    update: jest.fn(async () => undefined),
+    findOneBy: jest.fn(() => Promise.resolve(makeVideo())),
+    save: jest.fn((v: any) => Promise.resolve(v)),
+    update: jest.fn(() => Promise.resolve(undefined)),
   };
   const storage = overrides.storage ?? {
-    presignGetObject: jest.fn(async () => 'http://minio:9000/signed'),
-    putObject: jest.fn(async () => undefined),
+    presignGetObject: jest.fn(() =>
+      Promise.resolve('http://minio:9000/signed'),
+    ),
+    putObject: jest.fn(() => Promise.resolve(undefined)),
   };
   const ffmpeg = overrides.ffmpeg ?? {
-    probe: jest.fn(async () => ({
-      durationSeconds: 42,
-      width: 1280,
-      height: 720,
-      codec: 'h264',
-      format: 'mp4',
-      sizeBytes: 2048,
-    })),
-    captureFrame: jest.fn(async () => Buffer.from([0xff, 0xd8])),
+    probe: jest.fn(() =>
+      Promise.resolve({
+        durationSeconds: 42,
+        width: 1280,
+        height: 720,
+        codec: 'h264',
+        format: 'mp4',
+        sizeBytes: 2048,
+      }),
+    ),
+    captureFrame: jest.fn(() => Promise.resolve(Buffer.from([0xff, 0xd8]))),
   };
   return {
     processor: new VideoProcessor(repo, storage, ffmpeg),
@@ -68,18 +68,17 @@ describe('VideoProcessor — process', () => {
   it('extracts metadata, stores the thumbnail and marks the video ready', async () => {
     const video = makeVideo();
     const repo = {
-      findOneBy: jest.fn(async () => video),
-      save: jest.fn(async (v: any) => v),
+      findOneBy: jest.fn(() => Promise.resolve(video)),
+      save: jest.fn((v: any) => Promise.resolve(v)),
       update: jest.fn(),
     };
     const { processor, storage, ffmpeg } = makeDeps({ repo });
 
     await processor.process(makeJob());
 
-    expect(storage.presignGetObject).toHaveBeenCalledWith(
-      video.storage_key,
-      { internal: true },
-    );
+    expect(storage.presignGetObject).toHaveBeenCalledWith(video.storage_key, {
+      internal: true,
+    });
     expect(ffmpeg.probe).toHaveBeenCalledWith('http://minio:9000/signed');
     expect(storage.putObject).toHaveBeenCalledWith(
       'thumbnails/video-1.jpg',
@@ -101,7 +100,7 @@ describe('VideoProcessor — process', () => {
 
   it('skips silently when the video row no longer exists', async () => {
     const repo = {
-      findOneBy: jest.fn(async () => null),
+      findOneBy: jest.fn(() => Promise.resolve(null)),
       save: jest.fn(),
       update: jest.fn(),
     };

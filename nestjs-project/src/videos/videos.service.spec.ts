@@ -41,21 +41,21 @@ function makeService(overrides: {
 }) {
   const repo = overrides.repo ?? {
     create: jest.fn((v: any) => v),
-    save: jest.fn(async (v: any) => v as Video),
+    save: jest.fn((v: any) => Promise.resolve(v as Video)),
     findOne: jest.fn(),
   };
   const channels = overrides.channels ?? {
-    findByUserId: jest.fn(async () => ({ id: 'channel-1' })),
+    findByUserId: jest.fn(() => Promise.resolve({ id: 'channel-1' })),
   };
   const storage = overrides.storage ?? {
-    createMultipartUpload: jest.fn(async () => 'upload-1'),
-    presignUploadPart: jest.fn(
-      async (_k: string, _u: string, n: number) => `https://signed/${n}`,
+    createMultipartUpload: jest.fn(() => Promise.resolve('upload-1')),
+    presignUploadPart: jest.fn((_k: string, _u: string, n: number) =>
+      Promise.resolve(`https://signed/${n}`),
     ),
-    abortMultipartUpload: jest.fn(async () => undefined),
+    abortMultipartUpload: jest.fn(() => Promise.resolve(undefined)),
   };
   const producer = overrides.producer ?? {
-    enqueueProcessVideo: jest.fn(async () => undefined),
+    enqueueProcessVideo: jest.fn(() => Promise.resolve(undefined)),
   };
   return {
     service: new VideosService(repo, channels, storage, producer),
@@ -104,9 +104,9 @@ describe('VideosService — initiateUpload', () => {
       save: jest
         .fn()
         .mockRejectedValueOnce(makeUniqueUrlIdError())
-        .mockImplementation(async (v: any) => {
+        .mockImplementation((v: any) => {
           saved.push(v);
-          return v as Video;
+          return Promise.resolve(v as Video);
         }),
       findOne: jest.fn(),
     };
@@ -136,7 +136,7 @@ describe('VideosService — initiateUpload', () => {
 
 describe('VideosService — requestPartUrls', () => {
   it('throws VideoNotFoundException for an unknown video', async () => {
-    const repo = { findOne: jest.fn(async () => null) };
+    const repo = { findOne: jest.fn(() => Promise.resolve(null)) };
     const { service } = makeService({ repo });
 
     await expect(
@@ -145,7 +145,7 @@ describe('VideosService — requestPartUrls', () => {
   });
 
   it('throws NotVideoOwnerException when the caller does not own the video', async () => {
-    const repo = { findOne: jest.fn(async () => makeVideo()) };
+    const repo = { findOne: jest.fn(() => Promise.resolve(makeVideo())) };
     const { service } = makeService({ repo });
 
     await expect(
@@ -155,8 +155,10 @@ describe('VideosService — requestPartUrls', () => {
 
   it('throws UploadNotInProgressException when the video is not a draft', async () => {
     const repo = {
-      findOne: jest.fn(async () =>
-        makeVideo({ status: VideoStatus.PROCESSING, upload_id: null }),
+      findOne: jest.fn(() =>
+        Promise.resolve(
+          makeVideo({ status: VideoStatus.PROCESSING, upload_id: null }),
+        ),
       ),
     };
     const { service } = makeService({ repo });
@@ -167,7 +169,7 @@ describe('VideosService — requestPartUrls', () => {
   });
 
   it('rejects part numbers outside the computed range', async () => {
-    const repo = { findOne: jest.fn(async () => makeVideo()) };
+    const repo = { findOne: jest.fn(() => Promise.resolve(makeVideo())) };
     const { service } = makeService({ repo });
 
     await expect(
@@ -177,7 +179,7 @@ describe('VideosService — requestPartUrls', () => {
   });
 
   it('re-issues URLs for the requested parts', async () => {
-    const repo = { findOne: jest.fn(async () => makeVideo()) };
+    const repo = { findOne: jest.fn(() => Promise.resolve(makeVideo())) };
     const { service } = makeService({ repo });
 
     const parts = await service.requestPartUrls('user-1', 'video-1', {
@@ -196,9 +198,11 @@ describe('VideosService — completeUpload', () => {
 
   function makeCompleteStorage(overrides: Record<string, any> = {}) {
     return {
-      completeMultipartUpload: jest.fn(async () => undefined),
-      headObject: jest.fn(async () => ({ sizeBytes: 250 * 1024 ** 2 })),
-      deleteObject: jest.fn(async () => undefined),
+      completeMultipartUpload: jest.fn(() => Promise.resolve(undefined)),
+      headObject: jest.fn(() =>
+        Promise.resolve({ sizeBytes: 250 * 1024 ** 2 }),
+      ),
+      deleteObject: jest.fn(() => Promise.resolve(undefined)),
       ...overrides,
     };
   }
@@ -206,8 +210,8 @@ describe('VideosService — completeUpload', () => {
   it('flips the video to processing and enqueues exactly one job', async () => {
     const video = makeVideo();
     const repo = {
-      findOne: jest.fn(async () => video),
-      save: jest.fn(async (v: any) => v as Video),
+      findOne: jest.fn(() => Promise.resolve(video)),
+      save: jest.fn((v: any) => Promise.resolve(v as Video)),
     };
     const storage = makeCompleteStorage();
     const { service, producer } = makeService({ repo, storage });
@@ -222,8 +226,10 @@ describe('VideosService — completeUpload', () => {
 
   it('throws UploadNotInProgressException on double completion', async () => {
     const repo = {
-      findOne: jest.fn(async () =>
-        makeVideo({ status: VideoStatus.PROCESSING, upload_id: null }),
+      findOne: jest.fn(() =>
+        Promise.resolve(
+          makeVideo({ status: VideoStatus.PROCESSING, upload_id: null }),
+        ),
       ),
     };
     const { service, producer } = makeService({
@@ -240,11 +246,11 @@ describe('VideosService — completeUpload', () => {
   it('does not flip status when the stored size mismatches the declared size', async () => {
     const video = makeVideo();
     const repo = {
-      findOne: jest.fn(async () => video),
-      save: jest.fn(async (v: any) => v as Video),
+      findOne: jest.fn(() => Promise.resolve(video)),
+      save: jest.fn((v: any) => Promise.resolve(v as Video)),
     };
     const storage = makeCompleteStorage({
-      headObject: jest.fn(async () => ({ sizeBytes: 1 })),
+      headObject: jest.fn(() => Promise.resolve({ sizeBytes: 1 })),
     });
     const { service, producer } = makeService({ repo, storage });
 
@@ -258,8 +264,8 @@ describe('VideosService — completeUpload', () => {
 
   it('maps storage completion failures to UploadIncompleteException', async () => {
     const repo = {
-      findOne: jest.fn(async () => makeVideo()),
-      save: jest.fn(async (v: any) => v as Video),
+      findOne: jest.fn(() => Promise.resolve(makeVideo())),
+      save: jest.fn((v: any) => Promise.resolve(v as Video)),
     };
     const storage = makeCompleteStorage({
       completeMultipartUpload: jest
@@ -278,14 +284,16 @@ describe('VideosService — completeUpload', () => {
 describe('VideosService — stream and download URLs', () => {
   function makeReadStorage() {
     return {
-      presignGetObject: jest.fn(async () => 'https://signed/get'),
+      presignGetObject: jest.fn(() => Promise.resolve('https://signed/get')),
     };
   }
 
   it('returns a stream URL for a ready video', async () => {
     const repo = {
-      findOne: jest.fn(async () =>
-        makeVideo({ status: VideoStatus.READY, upload_id: null }),
+      findOne: jest.fn(() =>
+        Promise.resolve(
+          makeVideo({ status: VideoStatus.READY, upload_id: null }),
+        ),
       ),
     };
     const storage = makeReadStorage();
@@ -293,7 +301,10 @@ describe('VideosService — stream and download URLs', () => {
 
     const result = await service.getStreamUrl('url_abc1234');
 
-    expect(result).toEqual({ url: 'https://signed/get', expiresInSeconds: 3600 });
+    expect(result).toEqual({
+      url: 'https://signed/get',
+      expiresInSeconds: 3600,
+    });
     expect(storage.presignGetObject).toHaveBeenCalledWith(
       'videos/video-1/original.mp4',
     );
@@ -301,8 +312,10 @@ describe('VideosService — stream and download URLs', () => {
 
   it('passes the original filename as attachment for downloads', async () => {
     const repo = {
-      findOne: jest.fn(async () =>
-        makeVideo({ status: VideoStatus.READY, upload_id: null }),
+      findOne: jest.fn(() =>
+        Promise.resolve(
+          makeVideo({ status: VideoStatus.READY, upload_id: null }),
+        ),
       ),
     };
     const storage = makeReadStorage();
@@ -320,7 +333,7 @@ describe('VideosService — stream and download URLs', () => {
     'throws VideoNotReadyException for %s videos',
     async (status) => {
       const repo = {
-        findOne: jest.fn(async () => makeVideo({ status })),
+        findOne: jest.fn(() => Promise.resolve(makeVideo({ status }))),
       };
       const { service } = makeService({ repo, storage: makeReadStorage() });
 
@@ -347,7 +360,7 @@ describe('VideosService — stream and download URLs', () => {
   });
 
   it('throws VideoNotFoundException for an unknown urlId', async () => {
-    const repo = { findOne: jest.fn(async () => null) };
+    const repo = { findOne: jest.fn(() => Promise.resolve(null)) };
     const { service } = makeService({ repo });
 
     await expect(service.findByUrlId('missing')).rejects.toThrow(
@@ -362,12 +375,12 @@ describe('VideosService — cleanupAbandonedUploads', () => {
   it('reclaims only drafts older than 24h with a pending upload', async () => {
     const stale = makeVideo({ id: 'stale' });
     const repo = {
-      find: jest.fn(async () => [stale]),
-      delete: jest.fn(async () => undefined),
+      find: jest.fn(() => Promise.resolve([stale])),
+      delete: jest.fn(() => Promise.resolve(undefined)),
       findOne: jest.fn(),
     };
     const storage = {
-      abortMultipartUpload: jest.fn(async () => undefined),
+      abortMultipartUpload: jest.fn(() => Promise.resolve(undefined)),
     };
     const { service } = makeService({ repo, storage });
 
@@ -386,8 +399,8 @@ describe('VideosService — cleanupAbandonedUploads', () => {
   it('still deletes the row when the storage abort fails', async () => {
     const stale = makeVideo({ id: 'stale' });
     const repo = {
-      find: jest.fn(async () => [stale]),
-      delete: jest.fn(async () => undefined),
+      find: jest.fn(() => Promise.resolve([stale])),
+      delete: jest.fn(() => Promise.resolve(undefined)),
       findOne: jest.fn(),
     };
     const storage = {
