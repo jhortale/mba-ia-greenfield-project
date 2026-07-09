@@ -160,6 +160,79 @@ describe('Videos (e2e)', () => {
     });
   });
 
+  describe('POST /videos/:videoId/upload/complete', () => {
+    it('completes a real multipart upload and enqueues processing', async () => {
+      const { accessToken } = await registerAndLogin('complete1@example.com');
+      const created = await initiate(accessToken).expect(201);
+
+      const put = await fetch(created.body.upload.parts[0].url, {
+        method: 'PUT',
+        body: Buffer.alloc(1024, 5),
+      });
+      expect(put.status).toBe(200);
+      const etag = put.headers.get('etag')!;
+
+      const response = await request(app.getHttpServer())
+        .post(`/videos/${created.body.video.id}/upload/complete`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ parts: [{ partNumber: 1, etag }] })
+        .expect(200);
+
+      expect(response.body.status).toBe('processing');
+
+      const row = await videoRepository.findOneByOrFail({
+        id: created.body.video.id,
+      });
+      expect(row.status).toBe(VideoStatus.PROCESSING);
+      await storage.deleteObject(row.storage_key);
+    });
+
+    it('returns 409 on double completion', async () => {
+      const { accessToken } = await registerAndLogin('complete2@example.com');
+      const created = await initiate(accessToken).expect(201);
+
+      const put = await fetch(created.body.upload.parts[0].url, {
+        method: 'PUT',
+        body: Buffer.alloc(1024, 6),
+      });
+      const etag = put.headers.get('etag')!;
+      const parts = { parts: [{ partNumber: 1, etag }] };
+
+      await request(app.getHttpServer())
+        .post(`/videos/${created.body.video.id}/upload/complete`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(parts)
+        .expect(200);
+
+      const response = await request(app.getHttpServer())
+        .post(`/videos/${created.body.video.id}/upload/complete`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(parts)
+        .expect(409);
+      expect(response.body.error).toBe('UPLOAD_NOT_IN_PROGRESS');
+
+      const row = await videoRepository.findOneByOrFail({
+        id: created.body.video.id,
+      });
+      await storage.deleteObject(row.storage_key);
+    });
+
+    it('returns 403 when a non-owner tries to complete', async () => {
+      const { accessToken } = await registerAndLogin('complete3@example.com');
+      const created = await initiate(accessToken).expect(201);
+      const { accessToken: intruderToken } = await registerAndLogin(
+        'complete-intruder@example.com',
+      );
+
+      const response = await request(app.getHttpServer())
+        .post(`/videos/${created.body.video.id}/upload/complete`)
+        .set('Authorization', `Bearer ${intruderToken}`)
+        .send({ parts: [{ partNumber: 1, etag: '"x"' }] })
+        .expect(403);
+      expect(response.body.error).toBe('NOT_VIDEO_OWNER');
+    });
+  });
+
   describe('POST /videos/:videoId/upload/part-urls', () => {
     it('re-issues part URLs for the owner', async () => {
       const { accessToken } = await registerAndLogin('owner1@example.com');

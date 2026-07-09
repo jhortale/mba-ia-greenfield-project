@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
+import { getQueueToken } from '@nestjs/bullmq';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { Queue } from 'bullmq';
 import { DataSource, Repository } from 'typeorm';
 import queueConfig from '../config/queue.config';
 import storageConfig from '../config/storage.config';
@@ -13,6 +15,10 @@ import {
   createTestDataSource,
 } from '../test/create-test-data-source';
 import { StorageService } from '../storage/storage.service';
+import {
+  PROCESS_VIDEO_JOB,
+  VIDEO_PROCESSING_QUEUE,
+} from '../queue/queue.constants';
 import { Video, VideoStatus } from './entities/video.entity';
 import { VideosModule } from './videos.module';
 import { VideosService } from './videos.service';
@@ -28,6 +34,7 @@ describe('VideosService (integration)', () => {
   let storage: StorageService;
   let dataSource: DataSource;
   let videoRepository: Repository<Video>;
+  let queue: Queue;
   let user: User;
 
   beforeAll(async () => {
@@ -48,6 +55,7 @@ describe('VideosService (integration)', () => {
     storage = module.get(StorageService);
     dataSource = module.get(DataSource);
     videoRepository = dataSource.getRepository(Video);
+    queue = module.get(getQueueToken(VIDEO_PROCESSING_QUEUE));
     await storage.ensureBucket();
   });
 
@@ -57,6 +65,7 @@ describe('VideosService (integration)', () => {
 
   beforeEach(async () => {
     await cleanAllTables(dataSource);
+    await queue.drain(true);
     user = await dataSource.getRepository(User).save({
       email: `uploader-${Math.random().toString(36).slice(2, 8)}@example.com`,
       password: 'hashed',
@@ -116,6 +125,65 @@ describe('VideosService (integration)', () => {
 
       const row = await videoRepository.findOneByOrFail({ id: video.id });
       await storage.abortMultipartUpload(row.storage_key, row.upload_id!);
+    });
+  });
+
+  describe('completeUpload', () => {
+    it('stores the object, flips to processing and enqueues the job', async () => {
+      const body = Buffer.alloc(1024, 3);
+      const { video, upload } = await service.initiateUpload(
+        user.id,
+        initiateDto,
+      );
+
+      const put = await fetch(upload.parts[0].url, {
+        method: 'PUT',
+        body,
+      });
+      expect(put.status).toBe(200);
+      const etag = put.headers.get('etag')!;
+
+      const completed = await service.completeUpload(user.id, video.id, {
+        parts: [{ partNumber: 1, etag }],
+      });
+
+      expect(completed.status).toBe(VideoStatus.PROCESSING);
+      expect(completed.upload_id).toBeNull();
+
+      const head = await storage.headObject(completed.storage_key);
+      expect(head).not.toBeNull();
+      expect(head!.sizeBytes).toBe(1024);
+
+      const jobs = await queue.getJobs(['waiting']);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].name).toBe(PROCESS_VIDEO_JOB);
+      expect(jobs[0].data).toEqual({ videoId: video.id });
+
+      await storage.deleteObject(completed.storage_key);
+    });
+
+    it('rejects a size mismatch and keeps the draft', async () => {
+      const { video, upload } = await service.initiateUpload(user.id, {
+        ...initiateDto,
+        sizeBytes: 2048, // declared larger than what we actually upload
+      });
+
+      const put = await fetch(upload.parts[0].url, {
+        method: 'PUT',
+        body: Buffer.alloc(512, 4),
+      });
+      const etag = put.headers.get('etag')!;
+
+      await expect(
+        service.completeUpload(user.id, video.id, {
+          parts: [{ partNumber: 1, etag }],
+        }),
+      ).rejects.toThrow('Upload incomplete or size mismatch');
+
+      const row = await videoRepository.findOneByOrFail({ id: video.id });
+      expect(row.status).toBe(VideoStatus.DRAFT);
+      expect(await storage.headObject(row.storage_key)).toBeNull();
+      expect(await queue.getJobs(['waiting'])).toHaveLength(0);
     });
   });
 });

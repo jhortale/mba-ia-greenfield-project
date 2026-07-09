@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 5/10 completed
+**SIs:** 6/10 completed
 
 ### SI-03.1 — Dependencies, Configuration Namespaces, and Compose Infrastructure (MinIO + Redis)
 - **Status:** completed
@@ -29,9 +29,9 @@
 - **Observations:** Video id generated app-side (crypto.randomUUID) so the storage key exists before the insert; failed draft insert aborts the just-created multipart upload to avoid orphan uploads. ChannelsService gained findByUserId (channel lookup is channels-domain logic); its constructor change required updating existing spec instantiations.
 
 ### SI-03.6 — Upload Completion and Processing Enqueue
-- **Status:** pending
-- **Tests:** —
-- **Observations:** —
+- **Status:** completed
+- **Tests:** 4 unit (guards, size mismatch, storage failure, single enqueue) + 2 integration (real part PUT → complete → object verified + job in Redis; mismatch keeps draft and reclaims object) + 3 e2e (200 processing, 409 double-complete, 403 non-owner)
+- **Observations:** On size mismatch the assembled object is deleted and upload_id cleared — the multipart session is consumed by CompleteMultipartUpload, so the client must restart the upload (the row remains draft and is eligible for cleanup).
 
 ### SI-03.7 — Video Worker: FFmpeg Processing Pipeline and Worker Container
 - **Status:** pending

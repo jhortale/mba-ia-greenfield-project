@@ -6,6 +6,7 @@ import { QueryFailedError, Repository } from 'typeorm';
 import { nanoid } from 'nanoid';
 import {
   NotVideoOwnerException,
+  UploadIncompleteException,
   UploadNotInProgressException,
   VideoNotFoundException,
 } from '../common/exceptions/domain.exception';
@@ -14,6 +15,7 @@ import { StorageService } from '../storage/storage.service';
 import { videoKey } from '../storage/storage.constants';
 import { VideoQueueProducer } from '../queue/video-queue.producer';
 import { Video, VideoStatus } from './entities/video.entity';
+import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
 import { RequestPartUrlsDto } from './dto/request-part-urls.dto';
 import {
@@ -138,6 +140,49 @@ export class VideosService {
       video.upload_id,
       dto.partNumbers,
     );
+  }
+
+  async completeUpload(
+    userId: string,
+    videoId: string,
+    dto: CompleteUploadDto,
+  ): Promise<Video> {
+    const video = await this.findOwnedVideo(userId, videoId);
+    if (video.status !== VideoStatus.DRAFT || !video.upload_id) {
+      throw new UploadNotInProgressException();
+    }
+
+    const parts = dto.parts
+      .slice()
+      .sort((a, b) => a.partNumber - b.partNumber);
+    try {
+      await this.storageService.completeMultipartUpload(
+        video.storage_key,
+        video.upload_id,
+        parts,
+      );
+    } catch {
+      throw new UploadIncompleteException();
+    }
+
+    const head = await this.storageService.headObject(video.storage_key);
+    if (!head || head.sizeBytes !== Number(video.size_bytes)) {
+      // The assembled object does not match the declared size — reclaim it
+      // and keep the draft so the client can restart the upload.
+      await this.storageService.deleteObject(video.storage_key);
+      video.upload_id = null;
+      await this.videoRepository.save(video);
+      throw new UploadIncompleteException();
+    }
+
+    video.status = VideoStatus.PROCESSING;
+    video.upload_id = null;
+    const saved = await this.videoRepository.save(video);
+
+    // Enqueue after the commit: the DB status is the source of truth and the
+    // job payload only carries the id (worker re-reads the row).
+    await this.videoQueueProducer.enqueueProcessVideo(saved.id);
+    return saved;
   }
 
   private async findOwnedVideo(

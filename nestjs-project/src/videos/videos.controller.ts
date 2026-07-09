@@ -16,6 +16,7 @@ import {
 import { ApiErrorEnvelope } from '../common/openapi/api-error-envelope.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { JwtPayload } from '../auth/auth.types';
+import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
 import { RequestPartUrlsDto } from './dto/request-part-urls.dto';
 import { VideosService } from './videos.service';
@@ -106,5 +107,47 @@ export class VideosController {
       dto,
     );
     return { parts };
+  }
+
+  @Post(':videoId/upload/complete')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Complete a video upload',
+    description:
+      'Completes the multipart upload in storage, verifies the stored object, flips the video to processing and enqueues the processing job.',
+  })
+  @ApiResponse({ status: 200, description: 'Upload completed, processing enqueued' })
+  @ApiResponse({
+    status: 400,
+    description: 'Upload incomplete or size mismatch',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller does not own the video',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video not found',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'No upload in progress for this video',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async completeUpload(
+    @CurrentUser() user: JwtPayload,
+    @Param('videoId', ParseUUIDPipe) videoId: string,
+    @Body() dto: CompleteUploadDto,
+  ): Promise<VideoSummary> {
+    const video = await this.videosService.completeUpload(
+      user.sub,
+      videoId,
+      dto,
+    );
+    return toVideoSummary(video);
   }
 }

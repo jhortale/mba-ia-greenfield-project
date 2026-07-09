@@ -1,6 +1,7 @@
 import { QueryFailedError } from 'typeorm';
 import {
   NotVideoOwnerException,
+  UploadIncompleteException,
   UploadNotInProgressException,
   VideoNotFoundException,
 } from '../common/exceptions/domain.exception';
@@ -186,5 +187,89 @@ describe('VideosService — requestPartUrls', () => {
       { partNumber: 2, url: 'https://signed/2' },
       { partNumber: 3, url: 'https://signed/3' },
     ]);
+  });
+});
+
+describe('VideosService — completeUpload', () => {
+  const parts = { parts: [{ partNumber: 1, etag: '"e1"' }] };
+
+  function makeCompleteStorage(overrides: Record<string, any> = {}) {
+    return {
+      completeMultipartUpload: jest.fn(async () => undefined),
+      headObject: jest.fn(async () => ({ sizeBytes: 250 * 1024 ** 2 })),
+      deleteObject: jest.fn(async () => undefined),
+      ...overrides,
+    };
+  }
+
+  it('flips the video to processing and enqueues exactly one job', async () => {
+    const video = makeVideo();
+    const repo = {
+      findOne: jest.fn(async () => video),
+      save: jest.fn(async (v: any) => v as Video),
+    };
+    const storage = makeCompleteStorage();
+    const { service, producer } = makeService({ repo, storage });
+
+    const result = await service.completeUpload('user-1', 'video-1', parts);
+
+    expect(result.status).toBe(VideoStatus.PROCESSING);
+    expect(result.upload_id).toBeNull();
+    expect(producer.enqueueProcessVideo).toHaveBeenCalledTimes(1);
+    expect(producer.enqueueProcessVideo).toHaveBeenCalledWith('video-1');
+  });
+
+  it('throws UploadNotInProgressException on double completion', async () => {
+    const repo = {
+      findOne: jest.fn(async () =>
+        makeVideo({ status: VideoStatus.PROCESSING, upload_id: null }),
+      ),
+    };
+    const { service, producer } = makeService({
+      repo,
+      storage: makeCompleteStorage(),
+    });
+
+    await expect(
+      service.completeUpload('user-1', 'video-1', parts),
+    ).rejects.toThrow(UploadNotInProgressException);
+    expect(producer.enqueueProcessVideo).not.toHaveBeenCalled();
+  });
+
+  it('does not flip status when the stored size mismatches the declared size', async () => {
+    const video = makeVideo();
+    const repo = {
+      findOne: jest.fn(async () => video),
+      save: jest.fn(async (v: any) => v as Video),
+    };
+    const storage = makeCompleteStorage({
+      headObject: jest.fn(async () => ({ sizeBytes: 1 })),
+    });
+    const { service, producer } = makeService({ repo, storage });
+
+    await expect(
+      service.completeUpload('user-1', 'video-1', parts),
+    ).rejects.toThrow(UploadIncompleteException);
+    expect(video.status).toBe(VideoStatus.DRAFT);
+    expect(storage.deleteObject).toHaveBeenCalledWith(video.storage_key);
+    expect(producer.enqueueProcessVideo).not.toHaveBeenCalled();
+  });
+
+  it('maps storage completion failures to UploadIncompleteException', async () => {
+    const repo = {
+      findOne: jest.fn(async () => makeVideo()),
+      save: jest.fn(async (v: any) => v as Video),
+    };
+    const storage = makeCompleteStorage({
+      completeMultipartUpload: jest
+        .fn()
+        .mockRejectedValue(new Error('InvalidPart')),
+    });
+    const { service, producer } = makeService({ repo, storage });
+
+    await expect(
+      service.completeUpload('user-1', 'video-1', parts),
+    ).rejects.toThrow(UploadIncompleteException);
+    expect(producer.enqueueProcessVideo).not.toHaveBeenCalled();
   });
 });

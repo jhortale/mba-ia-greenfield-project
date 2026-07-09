@@ -82,3 +82,9 @@ export class UploadNotInProgressException extends DomainException {
     );
   }
 }
+
+export class UploadIncompleteException extends DomainException {
+  constructor() {
+    super('UPLOAD_INCOMPLETE', 400, 'Upload incomplete or size mismatch');
+  }
+}
