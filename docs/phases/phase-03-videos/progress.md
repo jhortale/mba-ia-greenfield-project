@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 7/10 completed
+**SIs:** 8/10 completed
 
 ### SI-03.1 — Dependencies, Configuration Namespaces, and Compose Infrastructure (MinIO + Redis)
 - **Status:** completed
@@ -39,9 +39,9 @@
 - **Observations:** `autoLoadEntities` does not work in the worker (no forFeature for Channel/User) — entities registered explicitly since the Video relation graph reaches them. The worker integration suite self-skips (with instructions) in containers without ffmpeg; it must be run via `docker compose exec video-worker npm test -- --runInBand src/worker/video.processor.integration-spec.ts`. Fixture MP4 generated at test time with ffmpeg lavfi testsrc (no binary fixtures in the repo).
 
 ### SI-03.8 — Video Read, Streaming, and Download Endpoints
-- **Status:** pending
-- **Tests:** —
-- **Observations:** —
+- **Status:** completed
+- **Tests:** 7 unit (not-ready guards, thumbnail-only-when-ready, attachment filename) + 3 e2e including the full lifecycle: initiate → real presigned PUT → complete → REAL worker container processes with ffmpeg → details ready + thumbnail served → stream URL answers 206 to Range → download byte-identical with attachment disposition → any authenticated user can stream
+- **Observations:** The lifecycle e2e requires the video-worker container running (docker compose up -d) — deliberate: the test exercises the real cross-container pipeline. Committed test/fixtures/sample-2s.mp4 (11KB, generated with ffmpeg lavfi testsrc). openapi.json re-exported with the 6 new /videos paths and synced to next-frontend.
 
 ### SI-03.9 — Abandoned Upload Cleanup
 - **Status:** pending

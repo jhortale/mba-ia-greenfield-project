@@ -4,6 +4,7 @@ import {
   UploadIncompleteException,
   UploadNotInProgressException,
   VideoNotFoundException,
+  VideoNotReadyException,
 } from '../common/exceptions/domain.exception';
 import { Video, VideoStatus } from './entities/video.entity';
 import { VideosService } from './videos.service';
@@ -271,5 +272,86 @@ describe('VideosService — completeUpload', () => {
       service.completeUpload('user-1', 'video-1', parts),
     ).rejects.toThrow(UploadIncompleteException);
     expect(producer.enqueueProcessVideo).not.toHaveBeenCalled();
+  });
+});
+
+describe('VideosService — stream and download URLs', () => {
+  function makeReadStorage() {
+    return {
+      presignGetObject: jest.fn(async () => 'https://signed/get'),
+    };
+  }
+
+  it('returns a stream URL for a ready video', async () => {
+    const repo = {
+      findOne: jest.fn(async () =>
+        makeVideo({ status: VideoStatus.READY, upload_id: null }),
+      ),
+    };
+    const storage = makeReadStorage();
+    const { service } = makeService({ repo, storage });
+
+    const result = await service.getStreamUrl('url_abc1234');
+
+    expect(result).toEqual({ url: 'https://signed/get', expiresInSeconds: 3600 });
+    expect(storage.presignGetObject).toHaveBeenCalledWith(
+      'videos/video-1/original.mp4',
+    );
+  });
+
+  it('passes the original filename as attachment for downloads', async () => {
+    const repo = {
+      findOne: jest.fn(async () =>
+        makeVideo({ status: VideoStatus.READY, upload_id: null }),
+      ),
+    };
+    const storage = makeReadStorage();
+    const { service } = makeService({ repo, storage });
+
+    await service.getDownloadUrl('url_abc1234');
+
+    expect(storage.presignGetObject).toHaveBeenCalledWith(
+      'videos/video-1/original.mp4',
+      { downloadFilename: 'movie.mp4' },
+    );
+  });
+
+  it.each([VideoStatus.DRAFT, VideoStatus.PROCESSING, VideoStatus.FAILED])(
+    'throws VideoNotReadyException for %s videos',
+    async (status) => {
+      const repo = {
+        findOne: jest.fn(async () => makeVideo({ status })),
+      };
+      const { service } = makeService({ repo, storage: makeReadStorage() });
+
+      await expect(service.getStreamUrl('url_abc1234')).rejects.toThrow(
+        VideoNotReadyException,
+      );
+      await expect(service.getDownloadUrl('url_abc1234')).rejects.toThrow(
+        VideoNotReadyException,
+      );
+    },
+  );
+
+  it('returns a thumbnail URL only when the key exists', async () => {
+    const { service } = makeService({ storage: makeReadStorage() });
+
+    expect(
+      await service.getThumbnailUrl(makeVideo({ thumbnail_key: null })),
+    ).toBeNull();
+    expect(
+      await service.getThumbnailUrl(
+        makeVideo({ thumbnail_key: 'thumbnails/video-1.jpg' }),
+      ),
+    ).toBe('https://signed/get');
+  });
+
+  it('throws VideoNotFoundException for an unknown urlId', async () => {
+    const repo = { findOne: jest.fn(async () => null) };
+    const { service } = makeService({ repo });
+
+    await expect(service.findByUrlId('missing')).rejects.toThrow(
+      VideoNotFoundException,
+    );
   });
 });

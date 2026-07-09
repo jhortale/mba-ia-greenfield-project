@@ -9,10 +9,14 @@ import {
   UploadIncompleteException,
   UploadNotInProgressException,
   VideoNotFoundException,
+  VideoNotReadyException,
 } from '../common/exceptions/domain.exception';
 import { ChannelsService } from '../channels/channels.service';
 import { StorageService } from '../storage/storage.service';
-import { videoKey } from '../storage/storage.constants';
+import {
+  PLAYBACK_URL_TTL_SECONDS,
+  videoKey,
+} from '../storage/storage.constants';
 import { VideoQueueProducer } from '../queue/video-queue.producer';
 import { Video, VideoStatus } from './entities/video.entity';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
@@ -183,6 +187,48 @@ export class VideosService {
     // job payload only carries the id (worker re-reads the row).
     await this.videoQueueProducer.enqueueProcessVideo(saved.id);
     return saved;
+  }
+
+  async findByUrlId(urlId: string): Promise<Video> {
+    const video = await this.videoRepository.findOne({
+      where: { url_id: urlId },
+      relations: { channel: true },
+    });
+    if (!video) {
+      throw new VideoNotFoundException();
+    }
+    return video;
+  }
+
+  async getThumbnailUrl(video: Video): Promise<string | null> {
+    if (!video.thumbnail_key) return null;
+    return this.storageService.presignGetObject(video.thumbnail_key);
+  }
+
+  async getStreamUrl(
+    urlId: string,
+  ): Promise<{ url: string; expiresInSeconds: number }> {
+    const video = await this.findReadyByUrlId(urlId);
+    const url = await this.storageService.presignGetObject(video.storage_key);
+    return { url, expiresInSeconds: PLAYBACK_URL_TTL_SECONDS };
+  }
+
+  async getDownloadUrl(
+    urlId: string,
+  ): Promise<{ url: string; expiresInSeconds: number }> {
+    const video = await this.findReadyByUrlId(urlId);
+    const url = await this.storageService.presignGetObject(video.storage_key, {
+      downloadFilename: video.original_filename,
+    });
+    return { url, expiresInSeconds: PLAYBACK_URL_TTL_SECONDS };
+  }
+
+  private async findReadyByUrlId(urlId: string): Promise<Video> {
+    const video = await this.findByUrlId(urlId);
+    if (video.status !== VideoStatus.READY) {
+      throw new VideoNotReadyException();
+    }
+    return video;
   }
 
   private async findOwnedVideo(

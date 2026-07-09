@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -286,6 +288,147 @@ describe('Videos (e2e)', () => {
         .post('/videos/00000000-0000-0000-0000-000000000000/upload/part-urls')
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ partNumbers: [1] })
+        .expect(404);
+    });
+  });
+
+  describe('full lifecycle: upload → worker processing → stream/download', () => {
+    // Requires the video-worker container running (docker compose up -d):
+    // the job is consumed by the real worker with real ffmpeg.
+    jest.setTimeout(90_000);
+
+    const fixture = readFileSync(join(__dirname, 'fixtures', 'sample-2s.mp4'));
+
+    async function waitUntilProcessed(videoId: string): Promise<Video> {
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const row = await videoRepository.findOneByOrFail({ id: videoId });
+        if (
+          row.status === VideoStatus.READY ||
+          row.status === VideoStatus.FAILED
+        ) {
+          return row;
+        }
+        if (Date.now() > deadline) {
+          throw new Error(
+            `Video ${videoId} still ${row.status} after 60s — is the video-worker container running?`,
+          );
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+
+    it('processes a real video end-to-end and serves streaming/download URLs', async () => {
+      const { accessToken } = await registerAndLogin('lifecycle@example.com');
+
+      // 1. Initiate: draft pre-registered, part URLs issued.
+      const created = await initiate(accessToken, {
+        filename: 'sample-2s.mp4',
+        contentType: 'video/mp4',
+        sizeBytes: fixture.length,
+      }).expect(201);
+      const videoId = created.body.video.id as string;
+      const urlId = created.body.video.urlId as string;
+
+      // 2. Upload the real bytes through the presigned URL.
+      const put = await fetch(created.body.upload.parts[0].url, {
+        method: 'PUT',
+        body: fixture,
+      });
+      expect(put.status).toBe(200);
+
+      // 3. Complete: status flips to processing, job enqueued.
+      await request(app.getHttpServer())
+        .post(`/videos/${videoId}/upload/complete`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ parts: [{ partNumber: 1, etag: put.headers.get('etag')! }] })
+        .expect(200);
+
+      // 4. The real worker (separate container) processes automatically.
+      const processed = await waitUntilProcessed(videoId);
+      expect(processed.status).toBe(VideoStatus.READY);
+      expect(processed.duration_seconds).toBe(2);
+      expect(processed.metadata).toMatchObject({ width: 320, height: 240 });
+
+      // 5. Details expose metadata and a presigned thumbnail URL.
+      const details = await request(app.getHttpServer())
+        .get(`/videos/${urlId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(details.body.status).toBe('ready');
+      expect(details.body.durationSeconds).toBe(2);
+      expect(details.body.thumbnailUrl).toBeTruthy();
+      const thumb = await fetch(details.body.thumbnailUrl);
+      expect(thumb.status).toBe(200);
+      expect(thumb.headers.get('content-type')).toBe('image/jpeg');
+
+      // 6. Streaming: presigned URL served by storage with Range/206 —
+      //    playback does not require downloading the whole file.
+      const streamUrl = await request(app.getHttpServer())
+        .get(`/videos/${urlId}/stream-url`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      const ranged = await fetch(streamUrl.body.url, {
+        headers: { Range: 'bytes=0-1023' },
+      });
+      expect(ranged.status).toBe(206);
+      expect(ranged.headers.get('content-range')).toBe(
+        `bytes 0-1023/${fixture.length}`,
+      );
+
+      // 7. Download: attachment disposition with the original filename.
+      const downloadUrl = await request(app.getHttpServer())
+        .get(`/videos/${urlId}/download-url`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      const download = await fetch(downloadUrl.body.url);
+      expect(download.status).toBe(200);
+      expect(download.headers.get('content-disposition')).toBe(
+        'attachment; filename="sample-2s.mp4"',
+      );
+      const downloaded = Buffer.from(await download.arrayBuffer());
+      expect(downloaded.equals(fixture)).toBe(true);
+
+      // 8. Any authenticated user (not only the owner) can stream it.
+      const { accessToken: viewerToken } =
+        await registerAndLogin('viewer@example.com');
+      await request(app.getHttpServer())
+        .get(`/videos/${urlId}/stream-url`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .expect(200);
+
+      // Cleanup storage objects.
+      const row = await videoRepository.findOneByOrFail({ id: videoId });
+      await storage.deleteObject(row.storage_key);
+      await storage.deleteObject(row.thumbnail_key!);
+    });
+
+    it('returns 409 VIDEO_NOT_READY while the video is a draft', async () => {
+      const { accessToken } = await registerAndLogin('notready@example.com');
+      const created = await initiate(accessToken).expect(201);
+
+      const response = await request(app.getHttpServer())
+        .get(`/videos/${created.body.video.urlId}/stream-url`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+      expect(response.body.error).toBe('VIDEO_NOT_READY');
+
+      await request(app.getHttpServer())
+        .get(`/videos/${created.body.video.urlId}/download-url`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+    });
+
+    it('returns 404 for an unknown urlId', async () => {
+      const { accessToken } = await registerAndLogin('unknown@example.com');
+
+      await request(app.getHttpServer())
+        .get('/videos/does-not-exist/stream-url')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(404);
+      await request(app.getHttpServer())
+        .get('/videos/does-not-exist')
+        .set('Authorization', `Bearer ${accessToken}`)
         .expect(404);
     });
   });
