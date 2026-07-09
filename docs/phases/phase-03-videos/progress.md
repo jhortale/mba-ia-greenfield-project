@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 6/10 completed
+**SIs:** 7/10 completed
 
 ### SI-03.1 — Dependencies, Configuration Namespaces, and Compose Infrastructure (MinIO + Redis)
 - **Status:** completed
@@ -34,9 +34,9 @@
 - **Observations:** On size mismatch the assembled object is deleted and upload_id cleared — the multipart session is consumed by CompleteMultipartUpload, so the client must restart the upload (the row remains draft and is eligible for cleanup).
 
 ### SI-03.7 — Video Worker: FFmpeg Processing Pipeline and Worker Container
-- **Status:** pending
-- **Tests:** —
-- **Observations:** —
+- **Status:** completed
+- **Tests:** 13 unit (ffmpeg.service.spec, video.processor.spec: thumbnail timing, missing-row no-op, final-failure persistence) + 1 module + 2 integration in the worker container (real ffmpeg processes a real generated MP4 → ready with metadata + thumbnail in MinIO; corrupt source → failed with error_message)
+- **Observations:** `autoLoadEntities` does not work in the worker (no forFeature for Channel/User) — entities registered explicitly since the Video relation graph reaches them. The worker integration suite self-skips (with instructions) in containers without ffmpeg; it must be run via `docker compose exec video-worker npm test -- --runInBand src/worker/video.processor.integration-spec.ts`. Fixture MP4 generated at test time with ffmpeg lavfi testsrc (no binary fixtures in the repo).
 
 ### SI-03.8 — Video Read, Streaming, and Download Endpoints
 - **Status:** pending
