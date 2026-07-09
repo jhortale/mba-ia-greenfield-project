@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 3/10 completed
+**SIs:** 5/10 completed
 
 ### SI-03.1 — Dependencies, Configuration Namespaces, and Compose Infrastructure (MinIO + Redis)
 - **Status:** completed
@@ -19,14 +19,14 @@
 - **Observations:** `cleanAllTables` test helper now deletes `videos` first — the FK to channels would break cross-suite cleanup otherwise. Migration test also drops `videos_status_enum` (same orphan-enum pattern fixed in the baseline).
 
 ### SI-03.4 — Queue Module and Processing Producer
-- **Status:** pending
-- **Tests:** —
-- **Observations:** —
+- **Status:** completed
+- **Tests:** 2/2 passing (video-queue.producer.integration-spec.ts against real Redis: job payload + attempts/backoff; queue.module.spec.ts)
+- **Observations:** QueueModule exports BullModule so consumers (worker) can register processors against the same queue registration.
 
 ### SI-03.5 — Upload Initiation with Draft Pre-registration
-- **Status:** pending
-- **Tests:** —
-- **Observations:** —
+- **Status:** completed
+- **Tests:** 9 unit (videos.service.spec.ts) + 2 integration (videos.service.integration-spec.ts, real MinIO PUTs via presigned URLs) + 8 e2e (videos.e2e-spec.ts)
+- **Observations:** Video id generated app-side (crypto.randomUUID) so the storage key exists before the insert; failed draft insert aborts the just-created multipart upload to avoid orphan uploads. ChannelsService gained findByUserId (channel lookup is channels-domain logic); its constructor change required updating existing spec instantiations.
 
 ### SI-03.6 — Upload Completion and Processing Enqueue
 - **Status:** pending
