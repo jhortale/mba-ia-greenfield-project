@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 8/10 completed
+**SIs:** 9/10 completed
 
 ### SI-03.1 — Dependencies, Configuration Namespaces, and Compose Infrastructure (MinIO + Redis)
 - **Status:** completed
@@ -44,9 +44,9 @@
 - **Observations:** The lifecycle e2e requires the video-worker container running (docker compose up -d) — deliberate: the test exercises the real cross-container pipeline. Committed test/fixtures/sample-2s.mp4 (11KB, generated with ffmpeg lavfi testsrc). openapi.json re-exported with the 6 new /videos paths and synced to next-frontend.
 
 ### SI-03.9 — Abandoned Upload Cleanup
-- **Status:** pending
-- **Tests:** —
-- **Observations:** —
+- **Status:** completed
+- **Tests:** 2 unit (TTL boundary via find criteria, tolerance to storage abort errors) + 1 integration (stale draft with real pending multipart reclaimed — abort verified by the part PUT failing afterwards; fresh drafts untouched)
+- **Observations:** With the live video-worker consuming the queue, integration/producer specs could no longer assert jobs in 'waiting' — assertions now search jobs across all states filtered by videoId (raciness caused by real infra, not a bug).
 
 ### SI-03.10 — Phase Closure: Full Suite, OpenAPI Sync, and Documentation
 - **Status:** pending

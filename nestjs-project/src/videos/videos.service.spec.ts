@@ -355,3 +355,51 @@ describe('VideosService — stream and download URLs', () => {
     );
   });
 });
+
+describe('VideosService — cleanupAbandonedUploads', () => {
+  const NOW = new Date('2026-07-09T12:00:00Z');
+
+  it('reclaims only drafts older than 24h with a pending upload', async () => {
+    const stale = makeVideo({ id: 'stale' });
+    const repo = {
+      find: jest.fn(async () => [stale]),
+      delete: jest.fn(async () => undefined),
+      findOne: jest.fn(),
+    };
+    const storage = {
+      abortMultipartUpload: jest.fn(async () => undefined),
+    };
+    const { service } = makeService({ repo, storage });
+
+    const count = await service.cleanupAbandonedUploads(NOW);
+
+    expect(count).toBe(1);
+    const where = (repo.find as jest.Mock).mock.calls[0][0].where;
+    expect(where.status).toBe(VideoStatus.DRAFT);
+    expect(storage.abortMultipartUpload).toHaveBeenCalledWith(
+      stale.storage_key,
+      stale.upload_id,
+    );
+    expect(repo.delete).toHaveBeenCalledWith({ id: 'stale' });
+  });
+
+  it('still deletes the row when the storage abort fails', async () => {
+    const stale = makeVideo({ id: 'stale' });
+    const repo = {
+      find: jest.fn(async () => [stale]),
+      delete: jest.fn(async () => undefined),
+      findOne: jest.fn(),
+    };
+    const storage = {
+      abortMultipartUpload: jest
+        .fn()
+        .mockRejectedValue(new Error('NoSuchUpload')),
+    };
+    const { service } = makeService({ repo, storage });
+
+    const count = await service.cleanupAbandonedUploads(NOW);
+
+    expect(count).toBe(1);
+    expect(repo.delete).toHaveBeenCalledWith({ id: 'stale' });
+  });
+});

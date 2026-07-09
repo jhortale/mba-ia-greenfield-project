@@ -40,13 +40,19 @@ describe('VideoQueueProducer (integration)', () => {
   it('enqueues a process-video job with the TD-06 retry policy', async () => {
     await producer.enqueueProcessVideo('video-123');
 
-    const jobs = await queue.getJobs(['waiting']);
-    expect(jobs).toHaveLength(1);
-
-    const job = jobs[0];
-    expect(job.name).toBe(PROCESS_VIDEO_JOB);
-    expect(job.data).toEqual({ videoId: 'video-123' });
-    expect(job.opts.attempts).toBe(3);
-    expect(job.opts.backoff).toEqual({ type: 'exponential', delay: 5000 });
+    // The live video-worker container may consume the job immediately —
+    // search every state instead of assuming it is still waiting.
+    const jobs = await queue.getJobs([
+      'waiting',
+      'active',
+      'delayed',
+      'completed',
+      'failed',
+    ]);
+    const job = jobs.find((j) => j.data.videoId === 'video-123');
+    expect(job).toBeDefined();
+    expect(job!.name).toBe(PROCESS_VIDEO_JOB);
+    expect(job!.opts.attempts).toBe(3);
+    expect(job!.opts.backoff).toEqual({ type: 'exponential', delay: 5000 });
   });
 });

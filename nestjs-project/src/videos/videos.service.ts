@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import { IsNull, LessThan, Not, QueryFailedError, Repository } from 'typeorm';
 import { nanoid } from 'nanoid';
 import {
   NotVideoOwnerException,
@@ -23,6 +23,7 @@ import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { InitiateUploadDto } from './dto/initiate-upload.dto';
 import { RequestPartUrlsDto } from './dto/request-part-urls.dto';
 import {
+  ABANDONED_UPLOAD_TTL_HOURS,
   UPLOAD_PART_SIZE_BYTES,
   URL_ID_LENGTH,
 } from './videos.constants';
@@ -221,6 +222,38 @@ export class VideosService {
       downloadFilename: video.original_filename,
     });
     return { url, expiresInSeconds: PLAYBACK_URL_TTL_SECONDS };
+  }
+
+  /**
+   * Reclaims drafts whose upload was never completed (TD-06 revision): after
+   * 24h the pending multipart upload is aborted in storage and the row
+   * deleted. Exposed as a service-level maintenance operation; a scheduled
+   * sweep (cron) is deliberately deferred until an operational need appears.
+   */
+  async cleanupAbandonedUploads(now: Date = new Date()): Promise<number> {
+    const cutoff = new Date(
+      now.getTime() - ABANDONED_UPLOAD_TTL_HOURS * 60 * 60 * 1000,
+    );
+    const abandoned = await this.videoRepository.find({
+      where: {
+        status: VideoStatus.DRAFT,
+        upload_id: Not(IsNull()),
+        created_at: LessThan(cutoff),
+      },
+    });
+
+    for (const video of abandoned) {
+      try {
+        await this.storageService.abortMultipartUpload(
+          video.storage_key,
+          video.upload_id!,
+        );
+      } catch {
+        // Already aborted / expired in storage — the row is still reclaimed.
+      }
+      await this.videoRepository.delete({ id: video.id });
+    }
+    return abandoned.length;
   }
 
   private async findReadyByUrlId(urlId: string): Promise<Video> {

@@ -154,10 +154,18 @@ describe('VideosService (integration)', () => {
       expect(head).not.toBeNull();
       expect(head!.sizeBytes).toBe(1024);
 
-      const jobs = await queue.getJobs(['waiting']);
-      expect(jobs).toHaveLength(1);
-      expect(jobs[0].name).toBe(PROCESS_VIDEO_JOB);
-      expect(jobs[0].data).toEqual({ videoId: video.id });
+      // The live video-worker container may grab the job immediately —
+      // look for it in any state instead of assuming it is still waiting.
+      const jobs = await queue.getJobs([
+        'waiting',
+        'active',
+        'delayed',
+        'completed',
+        'failed',
+      ]);
+      const enqueued = jobs.find((j) => j.data.videoId === video.id);
+      expect(enqueued).toBeDefined();
+      expect(enqueued!.name).toBe(PROCESS_VIDEO_JOB);
 
       await storage.deleteObject(completed.storage_key);
     });
@@ -183,7 +191,43 @@ describe('VideosService (integration)', () => {
       const row = await videoRepository.findOneByOrFail({ id: video.id });
       expect(row.status).toBe(VideoStatus.DRAFT);
       expect(await storage.headObject(row.storage_key)).toBeNull();
-      expect(await queue.getJobs(['waiting'])).toHaveLength(0);
+      const jobs = await queue.getJobs(['waiting', 'active']);
+      expect(jobs.filter((j) => j.data.videoId === video.id)).toHaveLength(0);
+    });
+  });
+
+  describe('cleanupAbandonedUploads', () => {
+    it('aborts the pending multipart upload and deletes stale drafts only', async () => {
+      const stale = await service.initiateUpload(user.id, initiateDto);
+      const fresh = await service.initiateUpload(user.id, initiateDto);
+
+      // Age the stale draft beyond the 24h TTL.
+      await videoRepository.update(stale.video.id, {
+        created_at: new Date(Date.now() - 25 * 60 * 60 * 1000),
+      });
+
+      const count = await service.cleanupAbandonedUploads();
+
+      expect(count).toBe(1);
+      expect(
+        await videoRepository.findOneBy({ id: stale.video.id }),
+      ).toBeNull();
+      const freshRow = await videoRepository.findOneByOrFail({
+        id: fresh.video.id,
+      });
+      expect(freshRow.status).toBe(VideoStatus.DRAFT);
+
+      // The stale upload is gone from storage: uploading a part to it fails.
+      const put = await fetch(stale.upload.parts[0].url, {
+        method: 'PUT',
+        body: Buffer.alloc(8, 9),
+      });
+      expect(put.status).toBeGreaterThanOrEqual(400);
+
+      await storage.abortMultipartUpload(
+        freshRow.storage_key,
+        freshRow.upload_id!,
+      );
     });
   });
 });
